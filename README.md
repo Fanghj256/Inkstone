@@ -1,6 +1,8 @@
-# kb-inbox
+# inkstone
 
-> 手机分享一条链接 → 抓成原文 → 落进本地 Markdown → 自动 git 存档 → 回你一条"已入库"。
+> 砚台。磨墨的地方，记录开始的地方。
+
+手机分享一条链接 → 抓成原文 → 落进本地 Markdown → 自动 git 存档 → 回你一条"已入库"。
 
 A self-hosted inbox for your personal knowledge base. Send a link from your phone, get the
 original text on your own disk, versioned with git. No cloud, no account, no model rewriting
@@ -134,7 +136,7 @@ language: TypeScript
 
 ```powershell
 git clone <这个仓库>
-cd kb-inbox
+cd inkstone
 
 python -m pip install -r requirements.txt          # 核心
 python -m pip install -r requirements-video.txt    # 视频（可选）
@@ -179,7 +181,7 @@ python inbox.py
 
 ## 它怎么工作
 
-![kb-inbox 架构图](docs/architecture.png)
+![inkstone 架构图](docs/architecture.png)
 
 > 可交互版本：[`docs/architecture.html`](docs/architecture.html)，下载后用浏览器打开，有节点详情和路径高亮。
 
