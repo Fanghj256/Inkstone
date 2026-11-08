@@ -1,0 +1,4 @@
+# 核心：收链接、抓正文、写 Markdown
+requests>=2.31
+trafilatura>=2.0
+PyYAML>=6.0

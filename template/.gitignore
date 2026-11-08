@@ -1,0 +1,23 @@
+# 系统与编辑器缓存
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# 敏感凭据与配置
+.env*
+*.key
+*.pem
+credentials.json
+tokens.json
+
+# 本地运行临时文件
+*.log
+tmp/
+*.tmp
+__pycache__/
+.venv/
+
+# 抓取失败时留下的半成品
+*.md.tmp
