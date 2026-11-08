@@ -9,6 +9,7 @@
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -467,6 +468,39 @@ def _serve(kb):
                 print(f"[{time.strftime('%H:%M:%S')}] 处理消息出错：{exc}", flush=True)
 
 
+def notify_failed(kb):
+    """启动时把 failed/ 汇总发一条，别让失败静默堆着。"""
+    folder = kb / "002-references" / "failed"
+    if not folder.exists():
+        return
+
+    files = sorted(folder.glob("*.json"))
+    if not files:
+        return
+
+    lines = []
+    for f in files[-10:]:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        lines.append(f"· {str(d.get('url', ''))[:90]}\n  {str(d.get('error', ''))[:100]}")
+
+    text = f"⚠️ failed/ 里有 {len(files)} 条抓取失败记录"
+    if lines:
+        text += "，最近 10 条：\n\n" + "\n".join(lines)
+    text += "\n\n重跑：python inbox.py --url <链接>；处理完可以把对应 json 删掉。"
+    try:
+        tg.send(text[:4000])
+    except Exception as exc:  # noqa: BLE001
+        print(f"失败汇总发送失败：{exc}", flush=True)
+
+
+def _delayed_summary(kb):
+    time.sleep(5)
+    notify_failed(kb)
+
+
 def run_bot():
     """守护外壳：进程内任何异常都不退出，30 秒后重来。开机自启靠它兜底。"""
     kb = kb_root()
@@ -481,6 +515,8 @@ def run_bot():
             print("[feishu] 通道已启用", flush=True)
         except Exception as exc:  # noqa: BLE001
             print(f"[feishu] 启动失败：{exc}", flush=True)
+
+    threading.Thread(target=_delayed_summary, args=(kb,), daemon=True).start()
 
     while True:
         try:

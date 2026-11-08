@@ -12,3 +12,4 @@ douyin-cookies.txt
 docs/*.finalize*.json
 docs/*.browser-check.json
 docs/*.json
+feishu_state.json
