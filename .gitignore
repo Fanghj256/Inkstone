@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.log
+
+# 浏览器导出的 cookies，等同登录凭证，不要提交
+cookies.txt
+*_cookies.txt
+douyin-cookies.txt
