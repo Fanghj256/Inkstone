@@ -74,6 +74,48 @@ def _clean(text):
     return re.sub(r"@_user_\d+", "", text).strip()
 
 
+def download_resource(message_id, file_key, kind="file"):
+    """下载消息里的文件或图片。"""
+    r = _session().get(
+        f"{BASE}/im/v1/messages/{message_id}/resources/{file_key}",
+        params={"type": kind},
+        headers={"Authorization": f"Bearer {tenant_token()}"},
+        timeout=180,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"下载失败 {r.status_code}: {r.text[:200]}")
+    return r.content
+
+
+def _handle_file(kb, chat_id, msg):
+    import store
+
+    try:
+        content = json.loads(msg.content or "{}")
+        if msg.message_type == "file":
+            key = content.get("file_key")
+            name = content.get("file_name") or f"{msg.message_id}.bin"
+            kind = "file"
+        elif msg.message_type == "image":
+            key = content.get("image_key")
+            name = f"{msg.message_id}.jpg"
+            kind = "image"
+        else:
+            send_text(chat_id, f"暂不支持 {msg.message_type} 类型，发文件和图片可以。")
+            return
+
+        if not key:
+            send_text(chat_id, "这条消息里没有找到文件标识。")
+            return
+
+        data = download_resource(msg.message_id, key, kind)
+        path = store.save_file(kb, name, data)
+        store.git_commit(kb, path, f"file: {path.name}")
+        send_text(chat_id, f"✅ 文件已存入 002-references/files\n{path.name}\n{len(data):,} 字节")
+    except Exception as exc:  # noqa: BLE001
+        send_text(chat_id, f"⚠️ 文件存入失败：{exc}"[:2000])
+
+
 def _handle(kb, chat_id, text):
     import inbox   # 延迟导入，避免循环
 
@@ -114,10 +156,7 @@ def start(kb):
                 _seen.clear()
 
         if msg.message_type != "text":
-            threading.Thread(
-                target=send_text, args=(msg.chat_id, "目前只支持文字和链接，文件请走 Telegram。"),
-                daemon=True,
-            ).start()
+            threading.Thread(target=_handle_file, args=(kb, msg.chat_id, msg), daemon=True).start()
             return
 
         text = _clean(json.loads(msg.content).get("text", ""))
