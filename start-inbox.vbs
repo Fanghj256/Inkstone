@@ -14,4 +14,11 @@ For Each p In procs
 Next
 
 sh.CurrentDirectory = dir
-sh.Run "cmd /c python inbox.py >> inbox.log 2>&1", 0, False
+
+' Prefer the uv-managed virtualenv when it exists, fall back to system python.
+venv = dir & "\.venv\Scripts\python.exe"
+If fso.FileExists(venv) Then
+    sh.Run "cmd /c """ & venv & """ inbox.py >> inbox.log 2>&1", 0, False
+Else
+    sh.Run "cmd /c python inbox.py >> inbox.log 2>&1", 0, False
+End If

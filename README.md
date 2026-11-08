@@ -134,12 +134,25 @@ language: TypeScript
 
 ### 1. 装依赖
 
-```powershell
+用 [uv](https://docs.astral.sh/uv/)——一个 Rust 写的 Python 包管理器，装一次，之后一条命令：
+
+```bash
 git clone <这个仓库>
 cd inkstone
 
-python -m pip install -r requirements.txt          # 核心
-python -m pip install -r requirements-video.txt    # 视频（可选）
+uv sync                 # 核心
+uv sync --extra video   # 视频（可选）
+```
+
+`uv.lock` 已经把版本钉死，换机器也是同一套依赖。
+
+不想装 uv 也能用 pip：
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+pip install -r requirements-video.txt
 ```
 
 ### 2. 建 bot 拿 token
@@ -170,9 +183,11 @@ git -C D:\my-kb init -b main
 
 ### 5. 跑起来
 
-```powershell
-python inbox.py
+```bash
+uv run inbox.py
 ```
+
+用 pip 的话就是 `python inbox.py`。
 
 给它发一条链接试试。Windows 想开机自启，把 `start-inbox.vbs` 的快捷方式
 放进 `shell:startup`。
