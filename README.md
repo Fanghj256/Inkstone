@@ -295,7 +295,7 @@ transcript.md / transcript.txt / note.html / frames/ / meta.json
 
 ## 国内用户：飞书能不能替代 Telegram
 
-能，而且对国内用户是升级。但这部分**尚未实现**，写在这里是为了把路线说清楚。
+能，而且对国内用户是升级。**已经接进代码了**（`feishu.py`，长连接）。
 
 | | Telegram | 飞书 |
 |---|---|---|
@@ -312,7 +312,21 @@ transcript.md / transcript.txt / note.html / frames/ / meta.json
 代价：需要一个飞书企业（免费建一个只有自己的就行），在开放平台建自建应用、开权限、配长连接。
 第一次配置大约 15 分钟，比 BotFather 麻烦，但配完不用管。
 
-**现状**：这部分还没写。当前版本只支持 Telegram。
+**现状**：`feishu.py` 已接入，和 Telegram 并行跑——两个入口共用同一套抓取和落盘。
+在 `.env` 里填上 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 就会自动启用，不填则只跑 Telegram。
+
+### 配置步骤（约 15 分钟）
+
+1. 打开 [open.feishu.cn](https://open.feishu.cn)，用飞书账号登录（没有企业就免费建一个）
+2. 创建企业自建应用 → 「添加应用能力」→ 开启**机器人**
+3. 权限管理加三个：`im:message`、`im:message:send_as_bot`、`im:chat:readonly`
+4. 事件订阅 → 选**长连接** → 添加事件 `im.message.receive_v1`
+5. 版本管理与发布 → 创建版本 → 发布（自己是管理员就直接通过）
+6. 把 App ID / App Secret 填进 `.env`，重启收件箱
+
+然后把机器人拉进一个群，**在群里发链接**——群就是队列，关机期间的消息可以在开机后补拉。
+
+当前飞书通道只处理文字和链接；文件、视频仍然走 Telegram。
 
 ---
 

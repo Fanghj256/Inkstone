@@ -12,6 +12,7 @@ import argparse
 import os
 import re
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -469,6 +470,18 @@ def _serve(kb):
 def run_bot():
     """守护外壳：进程内任何异常都不退出，30 秒后重来。开机自启靠它兜底。"""
     kb = kb_root()
+
+    # 飞书通道和 Telegram 并行跑，两个入口共用同一套抓取与落盘
+    if os.environ.get("FEISHU_APP_ID", "").strip():
+        try:
+            import feishu
+            threading.Thread(
+                target=feishu.start, args=(kb,), daemon=True, name="feishu",
+            ).start()
+            print("[feishu] 通道已启用", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[feishu] 启动失败：{exc}", flush=True)
+
     while True:
         try:
             _serve(kb)
