@@ -77,6 +77,7 @@ def _clean(text):
 def _handle(kb, chat_id, text):
     import inbox   # 延迟导入，避免循环
 
+    print(f"[feishu] 收到 {chat_id}: {text[:40]}", flush=True)
     try:
         rel_dir, body = inbox.split_prefix(text)
         urls = inbox.URL_RE.findall(body)
