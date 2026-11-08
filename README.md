@@ -200,15 +200,18 @@ uv run inbox.py
 
 > 可交互版本：[`docs/architecture.html`](docs/architecture.html)，下载后用浏览器打开，有节点详情和路径高亮。
 
-五个模块，各管一件事：
+模块各管一件事：
 
 | 文件 | 职责 |
 |---|---|
 | `inbox.py` | 收消息、拆前缀、分派、回执、后台队列 |
-| `extract.py` | 网页类提取器（X / 知乎 / 公众号 / GitHub / HF / 通用） |
+| `sources/` | 一个来源一个文件：`x` / `zhihu` / `weibo` / `wechat` / `github` / `huggingface` / `arxiv` / `xiaohongshu` / `web` |
 | `video.py` | 视频下载、转写、选帧、生成笔记 |
 | `store.py` | 命名、去重、YAML、原子写、git commit |
-| `tg.py` | Telegram API 封装 |
+| `tg.py` / `feishu.py` | 两个输入通道 |
+
+加一个新来源只要两步：在 `sources/` 下新建一个文件（暴露 `match(url)` 和 `fetch(url)`），
+再在 `sources/__init__.py` 的 `_SOURCES` 里加一行。路由、墙检测、落盘都不用动。
 
 设计上只有一个硬约束：**任何一步都不许改原文**。
 
