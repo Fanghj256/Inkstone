@@ -223,7 +223,7 @@ uv run inbox.py
 |---|---|---|
 | X 推文/长文 | ego-browser 真浏览器 | 必须登录；长文正文在 `twitterArticleReadView` 里 |
 | GitHub 仓库/issue/PR | `gh api` | 需要 `gh auth login`；比爬页面稳得多 |
-| 知乎 | ego-browser 真浏览器 | 要先点开"阅读全文"，否则只抓到前几段 |
+| 知乎 | ego-browser 真浏览器 | 官方开放平台只返回摘要，存不了原文，所以走浏览器；要先点开"阅读全文"，否则只抓到前几段 |
 | 微信公众号 | requests + trafilatura | 静态页，最好抓的一类 |
 | B站/YouTube 视频 | yt-dlp + 字幕/Whisper + OCR 选帧 | 字幕常要登录；CPU 转写慢 |
 | 抖音视频 | yt-dlp（需 cookies.txt） | 不带 fresh cookies 直接失败；短链会自动展开 |
