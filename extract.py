@@ -9,11 +9,14 @@ import os
 import re
 import subprocess
 import tempfile
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
+from xml.etree import ElementTree as ET
 
 import requests
 import trafilatura
+from pypdf import PdfReader
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -36,6 +39,10 @@ def route(url):
         return "wechat"
     if host == "huggingface.co" and urlparse(url).path.startswith("/spaces/"):
         return "huggingface"
+    if host.endswith("weibo.com") or host.endswith("weibo.cn"):
+        return "weibo"
+    if host.endswith("arxiv.org"):
+        return "arxiv"
     return "web"
 
 
@@ -185,7 +192,27 @@ _XHS_BODY = r'''
   });
 '''
 
-_BODIES = {"x": _X_BODY, "zhihu": _ZHIHU_BODY, "web": _WEB_BODY, "xiaohongshu": _XHS_BODY}
+_WEIBO_BODY = r'''
+  await page.waitForTimeout(2500);
+  data = await page.evaluate(() => {
+    const pick = (sel) => { const el = document.querySelector(sel); return el ? el.innerText.trim() : ""; };
+    const text = pick(".weibo-text") || pick(".card");
+    const first = text.split("\n").map((s) => s.trim()).find((s) => s.length > 4) || "";
+    const bracket = text.match(/【([^】]{4,80})】/);
+    let title = bracket ? bracket[1] : first.replace(/#[^#\s]{1,30}#/g, "").trim();
+    title = title.replace(/^[#\s]+/, "").slice(0, 60);
+    return {
+      title: title || first.slice(0, 60),
+      author: pick(".m-text-cut"),
+      text: text,
+      kind: "post",
+      url: location.href,
+    };
+  });
+'''
+
+_BODIES = {"x": _X_BODY, "zhihu": _ZHIHU_BODY, "web": _WEB_BODY, "xiaohongshu": _XHS_BODY,
+           "weibo": _WEIBO_BODY}
 
 
 def _browser(url, kind, wait=3000):
@@ -408,6 +435,72 @@ def _web(url):
 
 
 # --------------------------------------------------------------------------
+# 微博 / arXiv
+# --------------------------------------------------------------------------
+
+def _weibo_id(url):
+    m = re.search(r"/(?:detail|status)/([A-Za-z0-9]+)", url)
+    return m.group(1) if m else None
+
+
+def _arxiv(url):
+    """arXiv 走官方 API 拿元数据，再下 PDF 抽全文。"""
+    m = re.search(r"arxiv\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5}|[a-zA-Z\-]+/\d{7})", url)
+    if not m:
+        raise ValueError("没从链接里认出 arXiv 编号")
+    aid = m.group(1)
+
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    api = requests.get(
+        "http://export.arxiv.org/api/query",
+        params={"id_list": aid}, headers=HEADERS, timeout=40,
+    )
+    api.raise_for_status()
+    entry = ET.fromstring(api.content).find("a:entry", ns)
+    if entry is None:
+        raise RuntimeError("arXiv API 没有返回这篇论文")
+
+    def txt(tag):
+        node = entry.find(f"a:{tag}", ns)
+        return " ".join(node.text.split()) if node is not None and node.text else ""
+
+    title = txt("title")
+    abstract = txt("summary")
+    published = txt("published")[:10]
+    authors = [a.find("a:name", ns).text for a in entry.findall("a:author", ns)
+               if a.find("a:name", ns) is not None]
+
+    body = ""
+    try:
+        pdf = requests.get(f"https://arxiv.org/pdf/{aid}", headers=HEADERS, timeout=90)
+        pdf.raise_for_status()
+        reader = PdfReader(BytesIO(pdf.content))
+        pages = [p.extract_text() or "" for p in reader.pages[:40]]
+        body = "\n\n".join(pages).strip()
+    except Exception as exc:  # noqa: BLE001
+        body = f"（PDF 全文抽取失败：{exc}）"
+
+    text = "\n".join([
+        f"> {', '.join(authors[:6])}{' 等' if len(authors) > 6 else ''} · {published}",
+        "",
+        "## 摘要",
+        "",
+        abstract,
+        "",
+        "## 全文",
+        "",
+        body[:120000] or "（没有抽到正文）",
+    ])
+
+    return {
+        "title": f"[arXiv] {title}",
+        "author": ", ".join(authors[:3]),
+        "text": text,
+        "extra": {"arxiv_id": aid, "pages": len(body) // 1800 or None},
+    }
+
+
+# --------------------------------------------------------------------------
 
 def fetch(url):
     """统一入口：返回 {title, author, text, source, extra}。"""
@@ -430,6 +523,18 @@ def fetch(url):
             )
         data.setdefault("extra", {})["extractor"] = "ego-browser/note"
 
+    elif kind == "weibo":
+        wid = _weibo_id(url)
+        target = f"https://m.weibo.cn/detail/{wid}" if wid else url
+        data = _browser(target, "weibo", wait=3500)
+        if not data.get("text") or len(data["text"]) < 20:
+            raise RuntimeError("微博没抓到正文：可能被访客系统拦了，或这条微博已删除")
+        data.setdefault("extra", {})["extractor"] = "ego-browser/weibo"
+
+    elif kind == "arxiv":
+        data = _arxiv(url)
+        data.setdefault("extra", {})["extractor"] = "arxiv-api + pypdf"
+
     elif kind in ("x", "zhihu"):
         data = _browser(url, kind, wait=4000 if kind == "x" else 3000)
         if not data.get("text") or len(data["text"]) < 30:
@@ -442,7 +547,7 @@ def fetch(url):
     text = data["text"]
 
     # 抓到了但其实是墙：宁可判失败，也不要把页脚和法律声明存成"文章"
-    if kind in ("web", "wechat", "xiaohongshu"):
+    if kind in ("web", "wechat", "xiaohongshu", "weibo"):
         head = text[:2000]
         for marker in WALL_MARKERS:
             if marker in head:

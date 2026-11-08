@@ -6,3 +6,9 @@ __pycache__/
 cookies.txt
 *_cookies.txt
 douyin-cookies.txt
+
+# archify 中间产物
+.archify/
+docs/*.finalize*.json
+docs/*.browser-check.json
+docs/*.json

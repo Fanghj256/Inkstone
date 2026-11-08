@@ -176,10 +176,9 @@ python inbox.py
 
 ## 它怎么工作
 
-```openui-lang
-root = Stack([flow])
-flow = Steps([{title: "手机分享", markdown: "链接 / 文字 / 文件"}, {title: "Telegram", markdown: "长轮询收消息"}, {title: "按域名分派", markdown: "x / github / zhihu / wechat / video / web"}, {title: "提取原文", markdown: "API 或真浏览器"}, {title: "写 YAML + 原子落盘", markdown: "raw/<来源>/"}, {title: "git commit", markdown: "自动存档"}, {title: "回执", markdown: "标题 · 来源 · 字数 · 路径"}], "column")
-```
+![kb-inbox 架构图](docs/architecture.png)
+
+> 可交互版本：[`docs/architecture.html`](docs/architecture.html)，下载后用浏览器打开，有节点详情和路径高亮。
 
 五个模块，各管一件事：
 
@@ -207,6 +206,8 @@ flow = Steps([{title: "手机分享", markdown: "链接 / 文字 / 文件"}, {ti
 | 抖音视频 | yt-dlp（需 cookies.txt） | 不带 fresh cookies 直接失败；短链会自动展开 |
 | Hugging Face Space | HF API + README | 页面本体是 iframe，抓的是 README 和元信息 |
 | 小红书 | ego-browser 真浏览器 | 要登录；`xsec_token` 会过期；图文笔记正文往往只有几句话 |
+| 微博 | ego-browser（m.weibo.cn） | 访客系统会拦直连，必须走真浏览器 |
+| arXiv 论文 | 官方 API + PDF 抽全文 | 只支持 arXiv；知网/期刊不做 |
 | 其他网页 | requests + trafilatura | 抽不到正文时自动退回真浏览器再试一次 |
 
 判断抓没抓全很简单：看回执里的字数。技术长文低于 1000 字基本就是被拦了，

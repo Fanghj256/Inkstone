@@ -87,7 +87,7 @@ def process(url, kb):
         "fetched_via": data["extra"].get("extractor", ""),
         "chars": len(text),
     }
-    if len(text) < 300:
+    if len(text) < (80 if data["source"] == "weibo" else 300):
         meta["incomplete"] = True          # 大概率被反爬截断了，回头需要人工补
 
     for key, value in data["extra"].items():
