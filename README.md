@@ -80,7 +80,9 @@ the source.
 
 ## 30 秒看效果
 
-手机端：分享 → 选 Telegram → 发给自己的 bot。
+![手机端回执示意](docs/receipt.png)
+
+手机端：分享 → 选 Telegram → 发给自己的 bot。电脑上得到的是一个普通的 Markdown 文件：
 
 ```
 ✅ 已入库
