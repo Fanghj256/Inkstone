@@ -133,6 +133,21 @@ def git_move(kb, src, dst, message):
         return False
 
 
+def _has_remote(kb):
+    r = subprocess.run(["git", "-C", str(kb), "remote"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return bool(r.stdout.strip())
+
+
+def _push(kb):
+    """推远端，失败不影响本地；没网时下一次提交会补上。"""
+    try:
+        subprocess.run(["git", "-C", str(kb), "push", "--quiet"],
+                       capture_output=True, timeout=90)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def git_commit(kb, path, title):
     with _GIT_LOCK:
         if not (kb / ".git").exists():
@@ -143,4 +158,9 @@ def git_commit(kb, path, title):
             ["git", "-C", str(kb), "commit", "-m", f"add: {title}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
-        return r.returncode == 0
+        ok = r.returncode == 0
+
+    # 配了远端就顺手备份；AUTO_PUSH=0 可以关掉
+    if ok and os.environ.get("AUTO_PUSH", "1") != "0" and _has_remote(kb):
+        _push(kb)
+    return ok
