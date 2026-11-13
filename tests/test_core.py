@@ -138,6 +138,25 @@ class ManageTest(unittest.TestCase):
             ).stdout.strip()
             self.assertEqual(subject, "drop: 测试文章")
 
+    def test_drop_already_deleted_file(self):
+        os.environ["AUTO_PUSH"] = "0"
+        with tempfile.TemporaryDirectory() as tmp:
+            kb, doc = self._repo(tmp)
+            doc.unlink()
+            args = type("A", (), {
+                "kb": str(kb),
+                "target": str(doc),
+                "reason": "VSCode 里删过了",
+            })()
+            manage.cmd_drop(args)
+            log = (kb / "002-references" / "dropped.md").read_text(encoding="utf-8")
+            self.assertIn("测试文章", log)
+            subject = subprocess.run(
+                ["git", "-C", str(kb), "log", "-1", "--format=%s"],
+                capture_output=True, text=True, encoding="utf-8",
+            ).stdout.strip()
+            self.assertEqual(subject, "drop: 测试文章")
+
 
 if __name__ == "__main__":
     unittest.main()
