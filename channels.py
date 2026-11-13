@@ -245,8 +245,7 @@ def handle_urls(kb, channel, chat_id, urls, force_video=False):
             except Exception as exc:  # noqa: BLE001
                 store.save_failure(kb, url, exc)
                 lines.append(f"⚠️ 抓取失败\n{url}\n{exc}")
-        if len(other_urls) > 1:
-            lines.insert(0, f"收到 {len(other_urls)} 个链接，开始抓取…")
+        lines.insert(0, f"收到 {len(other_urls)} 个链接，开始抓取…")
         parts.append("\n\n".join(lines))
 
     if parts:
