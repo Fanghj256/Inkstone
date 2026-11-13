@@ -248,6 +248,7 @@ uv run inbox.py
 | 微信公众号 | requests + trafilatura | 静态页，最好抓的一类 |
 | B站/YouTube 视频 | yt-dlp + 字幕/Whisper + OCR 选帧 | 字幕常要登录；CPU 转写慢 |
 | 抖音视频 | yt-dlp（需 cookies.txt） | 不带 fresh cookies 直接失败；短链会自动展开 |
+| 快手 / Vimeo | yt-dlp | 按通用视频处理，不保证每个链接都能下 |
 | Hugging Face Space | HF API + README | 页面本体是 iframe，抓的是 README 和元信息 |
 | 小红书 | ego-browser 真浏览器 | 要登录；`xsec_token` 会过期；图文笔记正文往往只有几句话 |
 | 微博 | ego-browser（m.weibo.cn） | 访客系统会拦直连，必须走真浏览器 |
@@ -322,9 +323,12 @@ transcript.md / transcript.txt / note.html / frames/ / meta.json
 |---|---|
 | `transcript.md` | 带时间戳和截图的 Markdown，适合在库里读 |
 | `transcript.txt` | 纯文本，直接复制给 AI 做总结/问答 |
-| `note.html` | 自包含 HTML（图片内嵌），手机看最方便 |
-| `frames/` | 关键画面原图 |
+| `note.html` | 自包含 HTML（图片是压缩预览，手机看最方便） |
+| `frames/` | 关键画面母版（默认最长边 1080） |
 | `meta.json` | 元信息 + 选帧记录 |
+
+`frames/` 是母版，`note.html` 里只嵌 900px、质量 68 的预览图，避免同一张图存两份全尺寸。
+不想要 HTML 就设 `VIDEO_HTML=0`，Telegram/飞书会改发 `transcript.md`。
 
 第一次跑通用的是 3 分半的 B 站教程：CPU 上约 2 分 45 秒，转录 1,287 字，选出 8 张关键画面。
 
@@ -339,7 +343,8 @@ transcript.md / transcript.txt / note.html / frames/ / meta.json
 
 ## 国内用户：飞书能不能替代 Telegram
 
-能，而且对国内用户是升级。**已经接进代码了**（`feishu.py`，长连接）。
+能。Telegram 和飞书现在是同一层的两个通道：收消息各管各的，拆前缀、抓取、视频排队、落盘、
+回执全部走 `channels.py` 的同一套逻辑。
 
 | | Telegram | 飞书 |
 |---|---|---|
@@ -356,8 +361,10 @@ transcript.md / transcript.txt / note.html / frames/ / meta.json
 代价：需要一个飞书企业（免费建一个只有自己的就行），在开放平台建自建应用、开权限、配长连接。
 第一次配置大约 15 分钟，比 BotFather 麻烦，但配完不用管。
 
-**现状**：`feishu.py` 已接入，和 Telegram 并行跑——两个入口共用同一套抓取和落盘。
-在 `.env` 里填上 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 就会自动启用，不填则只跑 Telegram。
+**两种跑法**：
+
+- 只跑飞书：`.env` 里只填 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，`TOKEN` 留空。
+- 两个都跑：`TOKEN` 和飞书两个键都填，两个入口共用同一套抓取与落盘。
 
 ### 配置步骤（约 15 分钟）
 
@@ -370,7 +377,9 @@ transcript.md / transcript.txt / note.html / frames/ / meta.json
 
 然后把机器人拉进一个群，**在群里发链接**——群就是队列，关机期间的消息可以在开机后补拉。
 
-当前飞书通道支持文字、链接、文件和图片；视频仍然建议走 Telegram（飞书的媒体下载要单独鉴权，还没接）。
+飞书通道支持文字、链接、文件、图片和视频。视频和 Telegram 共用同一个单线程队列；
+`note.html` / `transcript.txt` 通过飞书的文件上传接口发回群里。文件太大时只发文字回执，
+路径仍然在库里。
 
 ---
 
@@ -464,17 +473,49 @@ git -C "D:\my-kb" push -u origin main
 
 | 键 | 作用 |
 |---|---|
-| `TOKEN` | Telegram bot token |
+| `TOKEN` | Telegram bot token；只跑飞书可留空 |
 | `PROXY` | 代理地址，Telegram 和抓取共用 |
 | `CHAT_ID` | 给你自己发通知用的会话 id |
+| `FEISHU_APP_ID` | 飞书自建应用 App ID；填了才启用飞书通道 |
+| `FEISHU_APP_SECRET` | 飞书自建应用 App Secret |
 | `KB_ROOT` | 知识库根目录 |
 | `VIDEO_COOKIES` | 浏览器导出的 cookies.txt 路径（B站/抖音） |
 | `VIDEO_COOKIES_FROM_BROWSER` | 直接从浏览器读 cookie，如 `firefox` |
 | `WHISPER_MODEL` | `small`（默认）/ `medium`（更准更慢） |
 | `WHISPER_LANG` | 如 `zh`，跳过语言检测 |
+| `WHISPER_BEAM` | Whisper beam size，默认 5；调大更准更慢 |
 | `VIDEO_MAX_DURATION` | 长视频上限，默认 7200 秒 |
 | `VIDEO_MAX_FRAMES` | 强制关键帧数量 |
 | `VIDEO_SCENE_THRESHOLD` | 场景变化灵敏度，默认 0.30 |
+| `VIDEO_FRAME_MAX_WIDTH` | 关键帧母版最长边，默认 1080 |
+| `VIDEO_FRAME_QUALITY` | 关键帧 JPEG 质量，默认 84 |
+| `VIDEO_HTML` | 是否生成自包含 `note.html`，默认 1；设 0 不生成 |
+| `VIDEO_HTML_MAX_WIDTH` | HTML 内嵌预览图最长边，默认 900 |
+| `VIDEO_HTML_QUALITY` | HTML 内嵌预览图质量，默认 68 |
+
+---
+
+## 开发与测试
+
+代码分三层：
+
+- `channels.py`：通道无关的意图（`/learn`、链接、前缀、随手记）和视频队列。
+- `inbox.py` / `feishu.py`：只负责收消息、发消息；新通道实现 `send_text` / `send_file` 即可。
+- `store.py`：命名、去重、frontmatter、原子写、git。
+
+测试不联网、不碰真实知识库：
+
+```powershell
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+`manage.py` 是知识库维护命令：
+
+```powershell
+python manage.py drop <路径|URL> --reason "..."   # 删 raw 并留记录
+python manage.py check                            # 体检
+python manage.py install-hooks                    # 启用 raw 只读钩子
+```
 
 ---
 
@@ -495,7 +536,7 @@ git -C "D:\my-kb" push -u origin main
 ## 限制
 
 - **Windows 优先。** 抓取和视频管线是跨平台的，但开机自启脚本是 `.vbs` / `.ps1`，Linux/macOS 需要自己换。
-- **必须有代理才能用 Telegram。** 国内用户请等飞书适配，或者自己先套一层。
+- **Telegram 必须挂代理；飞书不用。** 只跑飞书就把 `TOKEN` 留空，别为了启动去挂梯子。
 - **X / 知乎 / 小红书需要登录态。** 用的是本机真实浏览器，不是接口。
 - **小红书基本不可用。** 图文笔记正文太短，纯文本存档意义不大。
 - **知网、期刊论文不支持。** 付费墙 + 登录，建议只存链接和摘要。

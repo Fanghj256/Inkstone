@@ -7,9 +7,10 @@ cookies.txt
 *_cookies.txt
 douyin-cookies.txt
 
-# archify ÖÐ¼ä²úÎï
+# archify ï¿½Ð¼ï¿½ï¿½ï¿½ï¿½
 .archify/
 docs/*.finalize*.json
 docs/*.browser-check.json
 docs/*.json
 feishu_state.json
+.sagignore

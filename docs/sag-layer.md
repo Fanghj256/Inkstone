@@ -80,7 +80,8 @@ sag install opencode      # 或 claude-code / codex
 
 **四、索引会往被索引目录里写字。**
 
-`sag add` 会在目标目录生成 `.sagignore`（存扩展名等索引选项）。它不该进 git，已经在 `.gitignore` 里了。
+`sag add` 会在目标目录生成 `.sagignore`（存扩展名等索引选项）。它不该进 git，
+知识库和 Inkstone 两个仓库的 `.gitignore` 都已经排除了它。
 
 ## 该不该装
 

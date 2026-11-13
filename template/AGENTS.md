@@ -8,6 +8,9 @@
 2. **不把模型生成的内容混进 raw。** 摘要、翻译、润色后的版本，一律不许写进 `raw/`。需要留存就写 `002-references/wiki/`，并且标 `ai_generated: true`。
 3. **`003-notes/` 是人写的地方。** 你可以起草，但文首必须标 `draft: true`，并且不许覆盖已有的观点性内容——那是本人判断的痕迹。
 
+删除 `raw/` 里的文章不要在编辑器里直接删：用 `cd kb-inbox && python manage.py drop <路径|URL> --reason "..."`。
+它会把删除和原因记进 `002-references/dropped.md`，原文仍能从 git 历史找回。pre-commit 钩子会拦住直接删除。
+
 ## 可以做
 
 - 读 `002-references/` 回答提问，引用时给出文件名和大致段落
