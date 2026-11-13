@@ -25,11 +25,18 @@ def route(url):
     return "web"
 
 
+def _module_for(url):
+    for module in _SOURCES:
+        if module.match(url):
+            return module
+    return web
+
+
 def fetch(url):
     """统一入口：返回 {title, author, text, source, extra}。"""
-    kind = route(url)
-    module = next((m for m in _SOURCES if _name(m) == kind), None)
-    data = module.fetch(url) if module else web.fetch(url)
+    module = _module_for(url)
+    kind = _name(module)
+    data = module.fetch(url)
 
     text = data["text"]
 

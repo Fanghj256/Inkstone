@@ -30,7 +30,6 @@ from urllib.parse import urlparse
 import cv2
 import numpy as np
 import requests
-import yaml
 import yt_dlp
 
 try:
@@ -805,7 +804,8 @@ def _video_link(url, t):
     return url
 
 
-def build_markdown(meta, paragraphs, frames):
+def group_frames(paragraphs, frames):
+    """把每张截图挂到它前面最近的那段转录上。Markdown 和 HTML 共用。"""
     by_para = {i: [] for i in range(len(paragraphs))}
     for frame in frames:
         idx = 0
@@ -816,6 +816,11 @@ def build_markdown(meta, paragraphs, frames):
                 break
         if paragraphs:
             by_para[idx].append(frame)
+    return by_para
+
+
+def build_markdown(meta, paragraphs, frames):
+    by_para = group_frames(paragraphs, frames)
 
     lines = []
     for i, p in enumerate(paragraphs):
@@ -825,8 +830,9 @@ def build_markdown(meta, paragraphs, frames):
             lines.append(f"![{_fmt_ts(frame['t'])}](frames/{frame['file']})")
         lines.append("")
 
-    front_meta = {k: v for k, v in meta.items() if not k.startswith("_")}
-    front = yaml.safe_dump(front_meta, allow_unicode=True, sort_keys=False, width=1000).strip()
+    front = store.dump_frontmatter(
+        {k: v for k, v in meta.items() if not k.startswith("_")}
+    )
     return (
         f"---\n{front}\n---\n\n"
         f"# {meta['title']}\n\n"
@@ -837,17 +843,23 @@ def build_markdown(meta, paragraphs, frames):
     )
 
 
+def _html_image(path, max_width, quality):
+    """note.html 里放压缩预览，不重复存一份全尺寸原图。"""
+    img = cv2.imread(str(path))
+    if img is None:
+        return base64.b64encode(path.read_bytes()).decode("ascii")
+    if max_width and img.shape[1] > max_width:
+        scale = max_width / img.shape[1]
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    raw = buf.tobytes() if ok else path.read_bytes()
+    return base64.b64encode(raw).decode("ascii")
+
+
 def build_html(meta, paragraphs, frames):
-    by_para = {i: [] for i in range(len(paragraphs))}
-    for frame in frames:
-        idx = 0
-        for i, p in enumerate(paragraphs):
-            if p["start"] <= frame["t"]:
-                idx = i
-            else:
-                break
-        if paragraphs:
-            by_para[idx].append(frame)
+    by_para = group_frames(paragraphs, frames)
+    html_width = _env_int("VIDEO_HTML_MAX_WIDTH", 900)
+    html_quality = _env_int("VIDEO_HTML_QUALITY", 68)
 
     def esc(value):
         return html.escape(str(value or ""), quote=True)
@@ -857,7 +869,7 @@ def build_html(meta, paragraphs, frames):
         imgs = []
         for frame in by_para.get(i, []):
             path = meta["_folder"] / "frames" / frame["file"]
-            b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+            b64 = _html_image(path, html_width, html_quality)
             imgs.append(
                 f'<figure><img loading="lazy" src="data:image/jpeg;base64,{b64}" '
                 f'alt="{esc(_fmt_ts(frame["t"]))}">'
@@ -927,16 +939,18 @@ def _write_outputs(kb, final, meta, paragraphs, frames):
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     saved = []
+    frame_width = _env_int("VIDEO_FRAME_MAX_WIDTH", 1080)
+    frame_quality = _env_int("VIDEO_FRAME_QUALITY", 84)
     for frame in frames:
         img = cv2.imread(str(frame["path"]))
         if img is None:
             continue
-        if img.shape[1] > 1280:
-            scale = 1280 / img.shape[1]
+        if frame_width and img.shape[1] > frame_width:
+            scale = frame_width / img.shape[1]
             img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         name = _frame_name(frame["t"])
         # Windows 下 cv2.imwrite 遇到中文路径会静默失败，改成 encode + write_bytes
-        ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
+        ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), frame_quality])
         if not ok:
             continue
         (frames_dir / name).write_bytes(buf.tobytes())
@@ -955,21 +969,20 @@ def _write_outputs(kb, final, meta, paragraphs, frames):
 
     meta["frames"] = len(saved)
     meta["_folder"] = final
-    (final / "transcript.md").write_text(
-        build_markdown(meta, paragraphs, saved), encoding="utf-8",
-    )
-    (final / "transcript.txt").write_text(
+    store.atomic_write_text(final / "transcript.md", build_markdown(meta, paragraphs, saved))
+    store.atomic_write_text(
+        final / "transcript.txt",
         "\n\n".join(f"[{_fmt_ts(p['start'])}] {p['text']}" for p in paragraphs) + "\n",
-        encoding="utf-8",
     )
-    (final / "note.html").write_text(
-        build_html(meta, paragraphs, saved), encoding="utf-8",
-    )
+    # 自包含 HTML 手机上看方便，但图片是压缩预览；不要就设 VIDEO_HTML=0
+    if _env_int("VIDEO_HTML", 1) > 0:
+        store.atomic_write_text(final / "note.html", build_html(meta, paragraphs, saved))
 
     meta_out = {k: v for k, v in meta.items() if not k.startswith("_")}
     meta_out["frame_list"] = saved
-    (final / "meta.json").write_text(
-        json.dumps(meta_out, ensure_ascii=False, indent=2), encoding="utf-8",
+    store.atomic_write_text(
+        final / "meta.json",
+        json.dumps(meta_out, ensure_ascii=False, indent=2),
     )
     return meta_out
 
@@ -1091,12 +1104,7 @@ def note_draft(kb, ref, extra=""):
         "video_id": meta.get("video_id") or "",
         "video_title": title,
     }
-    front = yaml.safe_dump(note_meta, allow_unicode=True, sort_keys=False, width=1000).strip()
-    content = f"---\n{front}\n---\n\n{body.strip()}\n"
-
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    store.atomic_write_text(path, store.md_document(note_meta, body))
     store.git_commit(kb, path, f"学习笔记：{title}")
     return "ok", path, meta
 

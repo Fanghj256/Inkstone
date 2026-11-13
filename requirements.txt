@@ -2,3 +2,5 @@
 requests>=2.31
 trafilatura>=2.0
 PyYAML>=6.0
+pypdf>=5.0
+lark-oapi>=1.3

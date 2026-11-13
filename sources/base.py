@@ -3,6 +3,7 @@
 所有抓取器只依赖这里的两个东西：`HEADERS` 和 `browser()`。
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -52,7 +53,8 @@ def browser(url, body, wait=3000, space_prefix="kb"):
         data = await page.evaluate(() => ({ ... }))
     返回值是那个对象的 dict。
     """
-    space = f"{space_prefix}-{abs(hash(url)) % 10**8}"
+    # 用 sha1 而不是内置 hash()：hash 每个进程加盐，重启后同一个链接会换 space
+    space = f"{space_prefix}-{hashlib.sha1(url.encode('utf-8')).hexdigest()[:8]}"
 
     # mkstemp 会返回一个打开的文件描述符，Windows 下不关掉会导致后面删不掉
     fd, out_name = tempfile.mkstemp(suffix=".json")

@@ -40,6 +40,30 @@ def url_hash(url):
     return hashlib.sha1(canonical(url).encode("utf-8")).hexdigest()[:8]
 
 
+def atomic_write_text(path, content):
+    """先写 .tmp 再 replace；Windows 下跨盘/占用也不会留下半截文件。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def dump_frontmatter(meta):
+    return yaml.safe_dump(meta, allow_unicode=True, sort_keys=False, width=1000).strip()
+
+
+def md_document(meta, body, heading=None):
+    """frontmatter + 可选标题 + 正文。所有 Markdown 落盘只走这一个格式。"""
+    front = dump_frontmatter(meta)
+    parts = [f"---\n{front}\n---", ""]
+    if heading:
+        parts += [f"# {heading}", ""]
+    parts.append(body.strip())
+    return "\n".join(parts) + "\n"
+
+
 def slugify(title, maxlen=40):
     s = re.sub(r'[\\/:*?"<>|\r\n\t]', " ", title or "")
     s = re.sub(r"\s+", "-", s.strip())
@@ -62,19 +86,18 @@ def write_note(kb, meta, body):
     name = f"{date}-{slugify(meta.get('title'))}-{url_hash(meta['url'])}.md"
     path = folder / name
 
-    fm = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False, width=1000).strip()
-    content = f"---\n{fm}\n---\n\n# {meta.get('title', '未命名')}\n\n{body.strip()}\n"
-
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    atomic_write_text(path, md_document(meta, body, heading=meta.get("title", "未命名")))
     return path
 
 
 def save_file(kb, filename, data: bytes, rel_dir="002-references/files"):
     folder = kb / rel_dir
     folder.mkdir(parents=True, exist_ok=True)
-    safe = re.sub(r'[\\/:*?"<>|]', "_", filename or "unnamed")
+    # 只取文件名本身，挡掉 `..\..\x` 这类上传名
+    safe = Path(filename or "").name
+    safe = re.sub(r'[\\/:*?"<>|]', "_", safe).strip()
+    if safe in ("", ".", ".."):
+        safe = "unnamed"
     path = folder / safe
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes(data)
@@ -91,12 +114,7 @@ def write_simple(kb, rel_dir, title_hint, meta, body):
     hint = slugify(title_hint or "", 30) or "note"
     path = folder / f"{stamp}-{hint}.md"
 
-    fm = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False, width=1000).strip()
-    content = f"---\n{fm}\n---\n\n{body.strip()}\n"
-
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    atomic_write_text(path, md_document(meta, body))
     return path
 
 
@@ -105,16 +123,18 @@ def save_failure(kb, url, error):
     folder.mkdir(parents=True, exist_ok=True)
     name = f"{datetime.now(CST).strftime('%Y%m%d-%H%M%S')}-{url_hash(url)}.json"
     path = folder / name
-    path.write_text(
+    atomic_write_text(
+        path,
         json.dumps({"url": url, "error": str(error)[:1000], "at": now_iso()},
                    ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
     return path
 
 
 def git_move(kb, src, dst, message):
     """移动已入库的文件：能 git mv 就保留历史，否则直接搬。"""
+    moved = False
+    committed = False
     with _GIT_LOCK:
         dst.parent.mkdir(parents=True, exist_ok=True)
         if (kb / ".git").exists():
@@ -124,13 +144,19 @@ def git_move(kb, src, dst, message):
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
             if r.returncode == 0:
-                subprocess.run(
+                moved = True
+                c = subprocess.run(
                     ["git", "-C", str(kb), "commit", "-m", message],
                     capture_output=True,
                 )
-                return True
-        os.replace(src, dst)
-        return False
+                committed = c.returncode == 0
+        if not moved:
+            os.replace(src, dst)
+
+    # 和 git_commit 一样，移动也要补一次 push，否则远端要等下一次入库才更新
+    if committed and os.environ.get("AUTO_PUSH", "1") != "0" and _has_remote(kb):
+        _push(kb)
+    return committed
 
 
 def _has_remote(kb):

@@ -70,6 +70,58 @@ def send_text(chat_id, text):
     return data
 
 
+def _upload_file(path):
+    """先传到飞书换 file_key，再发一条文件消息。"""
+    path = Path(path)
+    with path.open("rb") as handle:
+        r = _session().post(
+            f"{BASE}/im/v1/files",
+            headers={"Authorization": f"Bearer {tenant_token()}"},
+            data={"file_type": "stream", "file_name": path.name},
+            files={"file": (path.name, handle)},
+            timeout=300,
+        )
+    data = r.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"飞书上传失败：{data.get('code')} {data.get('msg')}")
+    return data["data"]["file_key"]
+
+
+def send_file(chat_id, path, caption=""):
+    key = _upload_file(path)
+    r = _session().post(
+        f"{BASE}/im/v1/messages",
+        params={"receive_id_type": "chat_id"},
+        headers={"Authorization": f"Bearer {tenant_token()}"},
+        json={
+            "receive_id": chat_id,
+            "msg_type": "file",
+            "content": json.dumps({"file_key": key}, ensure_ascii=False),
+        },
+        timeout=60,
+    )
+    data = r.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"飞书发送文件失败：{data.get('code')} {data.get('msg')}")
+    # 飞书的文件消息不能带 caption，单独补一条说明
+    if caption:
+        send_text(chat_id, caption)
+    return data
+
+
+class FeishuChannel:
+    """给 channels.handle_text 用的发送适配器。"""
+
+    name = "feishu"
+    limit = 3000
+
+    def send_text(self, chat_id, text):
+        send_text(chat_id, text)
+
+    def send_file(self, chat_id, path, caption=""):
+        send_file(chat_id, path, caption)
+
+
 def _clean(text):
     """群聊里 @机器人 会留下 @_user_1 这样的占位符。"""
     return re.sub(r"@_user_\d+", "", text).strip()
@@ -135,7 +187,7 @@ def _history(chat_id, start_ts, end_ts):
 
 def backfill(kb):
     """开机时把关机期间群里的链接补收一遍。首次运行只看最近 24 小时。"""
-    import inbox
+    import channels
 
     state = _load_state()
     now = int(time.time())
@@ -164,15 +216,14 @@ def backfill(kb):
             except Exception:  # noqa: BLE001
                 continue
 
-            urls = inbox.URL_RE.findall(text)
+            urls = channels.URL_RE.findall(text)
             if not urls:
                 continue
 
             total += len(urls)
             print(f"[feishu] 补收 {chat_id}: {urls[0]}", flush=True)
             try:
-                send_text(chat_id, f"补收 {len(urls)} 个链接（关机期间的），开始抓取…")
-                send_text(chat_id, inbox.handle_urls(urls, kb))
+                channels.handle_urls(kb, FeishuChannel(), chat_id, urls)
             except Exception as exc:  # noqa: BLE001
                 print(f"[feishu] 补收失败：{exc}", flush=True)
 
@@ -227,22 +278,11 @@ def _handle_file(kb, chat_id, msg):
 
 
 def _handle(kb, chat_id, text):
-    import inbox   # 延迟导入，避免循环
+    import channels
 
     print(f"[feishu] 收到 {chat_id}: {text[:40]}", flush=True)
     try:
-        rel_dir, body = inbox.split_prefix(text)
-        urls = inbox.URL_RE.findall(body)
-
-        if urls:
-            send_text(chat_id, f"收到 {len(urls)} 个链接，开始抓取…")
-            send_text(chat_id, inbox.handle_urls(urls, kb))
-            return
-
-        if body:
-            folder = rel_dir or "001-inbox"
-            path = inbox.save_text(kb, body, folder, kind=folder.split("/")[-1])
-            send_text(chat_id, f"已存入 {folder}\n{path.name}")
+        channels.handle_text(kb, FeishuChannel(), chat_id, text)
     except Exception as exc:  # noqa: BLE001
         try:
             send_text(chat_id, f"⚠️ 处理失败：{exc}"[:3000])
@@ -282,11 +322,14 @@ def start(kb):
 
     app_id, app_secret = _credentials()
 
-    # 先补收关机期间的消息，再接实时长连接
-    try:
-        backfill(kb)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[feishu] 补收跳过：{exc}", flush=True)
+    # 补收放后台：积压十几条视频时，不能把实时长连接一起拖住
+    def _backfill_job():
+        try:
+            backfill(kb)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[feishu] 补收跳过：{exc}", flush=True)
+
+    threading.Thread(target=_backfill_job, daemon=True, name="feishu-backfill").start()
 
     while True:
         try:

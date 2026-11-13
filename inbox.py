@@ -15,13 +15,11 @@ import re
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import extract
+import channels
 import store
 import tg
-import video
 
 # Windows 控制台多为 GBK，emoji 会直接抛 UnicodeEncodeError。
 # 只把不可编码字符替换掉，不改编码，避免中文乱码。
@@ -30,20 +28,13 @@ try:
 except Exception:
     pass
 
-URL_RE = re.compile(r"https?://[^\s<>\"'）)】\]，。！？；：、》]+")
-
-# 消息前缀决定落到哪一层。不写前缀就用默认规则（文本→inbox，文件→files）
-ROUTES = {
-    "/note": "003-notes",
-    "/video": "003-notes/video trans notes",
-    "/idea": "001-inbox",
-}
+URL_RE = channels.URL_RE
+ROUTES = channels.ROUTES
 
 # 刚收到的文件记在这里，方便下一条消息说「这两个存成视频转写稿」。
 # 只放内存：bot 重启后失效，30 分钟也够用了。
-RECENT_TTL = 30 * 60
+RECENT_TTL = channels.RECENT_TTL
 RECENT_LIMIT = 10
-_pending_route = {}   # chat_id -> (目录, 过期时间)
 _recent = {}          # chat_id -> [{"path", "name", "unique", "at"}]
 
 # 「这几个文件放到视频转写稿」这类指令的目标目录
@@ -70,72 +61,16 @@ def kb_root():
 
 
 def process(url, kb):
-    """抓一篇。返回 (状态, meta, 路径)。"""
-    existing = store.find_existing(kb, url)
-    if existing:
-        return "skip", {"title": existing.stem}, existing
-
-    data = extract.fetch(url)
-    text = data["text"].strip()
-    if len(text) < 50:
-        raise RuntimeError(f"正文只有 {len(text)} 字，判定为抓取失败")
-
-    meta = {
-        "url": store.canonical(url),
-        "title": (data["title"] or url)[:200],
-        "source": data["source"],
-        "author": (data["author"] or "")[:80],
-        "fetched_at": store.now_iso(),
-        "fetched_via": data["extra"].get("extractor", ""),
-        "chars": len(text),
-    }
-    if len(text) < (80 if data["source"] == "weibo" else 300):
-        meta["incomplete"] = True          # 大概率被反爬截断了，回头需要人工补
-
-    for key, value in data["extra"].items():
-        if key not in meta and key != "extractor" and value not in (None, ""):
-            meta[key] = value
-
-    path = store.write_note(kb, meta, text)
-    store.git_commit(kb, path, meta["title"])
-    return "ok", meta, path
+    """兼容旧调用：抓一篇网页的实际实现已经搬到 channels.process。"""
+    return channels.process(url, kb)
 
 
 def split_prefix(text):
-    """把 `/note xxx` 拆成 (目标目录, 正文)。没有前缀就返回 (None, 原文)。"""
-    t = text.lstrip()
-    for key, folder in ROUTES.items():
-        if t.lower().startswith(key):
-            return folder, t[len(key):].strip()
-    return None, text
+    return channels.split_prefix(text)
 
 
 def save_text(kb, text, rel_dir="001-inbox", kind="idea"):
-    """没有链接的文字：随手记 / 笔记 / 转写稿。"""
-    body = text.strip()
-    hint = body.splitlines()[0][:24] if body else "note"
-    meta = {
-        "created": store.now_iso(),
-        "source": "telegram",
-        "kind": kind,
-        "chars": len(body),
-    }
-    path = store.write_simple(kb, rel_dir, hint, meta, body)
-    store.git_commit(kb, path, f"{kind}: {hint}")
-    return path
-
-
-def set_pending(chat_id, folder):
-    """单独发 /video 时先把目标目录记下来，留给下一条文件或文字用。"""
-    _pending_route[chat_id] = (folder, time.time() + RECENT_TTL)
-
-
-def take_pending(chat_id):
-    item = _pending_route.pop(chat_id, None)
-    if not item:
-        return None
-    folder, expires = item
-    return folder if time.time() <= expires else None
+    return channels.save_text(kb, text, rel_dir, kind, channel="telegram")
 
 
 def remember_file(chat_id, doc, path):
@@ -189,37 +124,8 @@ def move_files(kb, items, folder):
 
 
 def handle_urls(urls, kb):
-    lines = []
-    for url in urls:
-        try:
-            if video.is_video_url(url):
-                status, meta, path = video.process(url, kb)
-                if status == "skip":
-                    lines.append(f"⏭ 已经存过了\n{path.name}")
-                else:
-                    lines.append(
-                        f"✅ 视频已入库\n{meta['title']}\n"
-                        f"{meta['source']} · {meta['duration_hms']} · "
-                        f"转录 {meta['chars']:,} 字 · 截图 {meta['frames']} 张\n"
-                        f"{path.parent.name}/{path.name}\n"
-                        f"整理成学习笔记：/learn {meta.get('video_id') or path.name[-8:]}"
-                    )
-                continue
-
-            status, meta, path = process(url, kb)
-            if status == "skip":
-                lines.append(f"⏭ 已经存过了\n{path.name}")
-            else:
-                note = "\n⚠️ 正文只有 %d 字，可能没抓全" % meta["chars"] if meta.get("incomplete") else ""
-                lines.append(
-                    f"✅ 已入库\n{meta['title']}\n"
-                    f"{meta['source']} · {meta['chars']:,} 字\n"
-                    f"{path.parent.name}/{path.name}{note}"
-                )
-        except Exception as exc:  # noqa: BLE001
-            store.save_failure(kb, url, exc)
-            lines.append(f"⚠️ 抓取失败\n{url}\n{exc}")
-    return "\n\n".join(lines)
+    """CLI 用：同步处理（视频也等它跑完），返回可直接打印的回执。"""
+    return "\n\n".join(channels.fetch_sync(url, kb) for url in urls)
 
 
 def handle_document(msg, kb, rel_dir=None):
@@ -241,115 +147,14 @@ def handle_document(msg, kb, rel_dir=None):
     return f"✅ 文件已存入 {folder}\n{path.name}\n{len(resp.content)} 字节"
 
 
-_video_pool = ThreadPoolExecutor(max_workers=1)
-
-
-def enqueue_videos(urls, chat_id, kb):
-    """视频转写很慢，放到单线程队列里跑，不要让 Telegram 轮询卡住。"""
-    for url in urls:
-        _video_pool.submit(process_video_job, chat_id, url, kb)
-
-
-def process_video_job(chat_id, url, kb):
-    def notify(text):
-        try:
-            tg.api("sendMessage", chat_id=chat_id, text=text[:4000])
-        except Exception:  # noqa: BLE001
-            pass
-
-    try:
-        status, meta, path = video.process(url, kb, progress=notify)
-    except Exception as exc:  # noqa: BLE001
-        # 只有处理失败才留失败记录；发送失败不算法失败
-        store.save_failure(kb, url, exc)
-        try:
-            tg.api(
-                "sendMessage", chat_id=chat_id,
-                text=f"⚠️ 视频处理失败\n{url}\n{exc}"[:4000],
-            )
-        except Exception:  # noqa: BLE001
-            pass
-        return
-
-    if status == "skip":
-        try:
-            tg.api(
-                "sendMessage", chat_id=chat_id,
-                text=f"⏭ 已经存过了\n{path.name}"[:4000],
-            )
-        except Exception:  # noqa: BLE001
-            pass
-        return
-
-    try:
-        reply = (
-            f"✅ 视频已入库\n{meta['title']}\n"
-            f"{meta['source']} · {meta['duration_hms']} · "
-            f"转录 {meta['chars']:,} 字 · 截图 {meta['frames']} 张\n"
-            f"{path.parent.name}/{path.name}\n\n"
-            f"整理成学习笔记：/learn {meta.get('video_id') or path.name[-8:]}"
-        )
-        tg.api("sendMessage", chat_id=chat_id, text=reply[:4000])
-
-        doc = path / "note.html"
-        if not doc.exists() or doc.stat().st_size > 45 * 1024 * 1024:
-            doc = path / "transcript.md"
-        tg.send_document(
-            doc, chat_id=chat_id,
-            caption=f"{meta['title']} · 完整转录 + 关键画面",
-        )
-        txt = path / "transcript.txt"
-        if txt.exists() and txt != doc:
-            tg.send_document(
-                txt, chat_id=chat_id,
-                caption="纯文本转录，可直接发给 AI",
-            )
-    except Exception as exc:  # noqa: BLE001
-        try:
-            tg.api(
-                "sendMessage", chat_id=chat_id,
-                text=f"笔记已保存，但消息/文件发送失败：{exc}"[:4000],
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
-
 def handle_message(msg, kb):
     chat_id = msg["chat"]["id"]
     text = (msg.get("text") or msg.get("caption") or "").strip()
+    channel = channels.TelegramChannel()
 
     # /learn <视频编号>：在 003-notes 建一篇关联 raw 视频的学习笔记草稿
-    learn = re.match(r"^/learn\b\s*(.*)$", text, re.I | re.S)
-    if learn:
-        rest = learn.group(1).strip()
-        if not rest:
-            return tg.api(
-                "sendMessage", chat_id=chat_id,
-                text="用法：/learn <视频编号、BV号、链接或文件夹指纹>\n"
-                     "先发视频链接入库，再用回执里的编号建笔记。",
-            )
-        ref, _, extra = rest.partition(" ")
-        try:
-            status, path, meta = video.note_draft(kb, ref, extra)
-        except LookupError as exc:
-            return tg.api("sendMessage", chat_id=chat_id, text=f"⚠️ {exc}"[:4000])
-        except Exception as exc:  # noqa: BLE001
-            return tg.api("sendMessage", chat_id=chat_id, text=f"⚠️ 建笔记失败：{exc}"[:4000])
-
-        if status == "exists":
-            return tg.api(
-                "sendMessage", chat_id=chat_id,
-                text=f"这篇视频已经有笔记了，没有覆盖：\n003-notes/{path.name}"[:4000],
-            )
-        return tg.api(
-            "sendMessage", chat_id=chat_id,
-            text=(
-                f"✅ 已建学习笔记草稿\n{meta.get('title')}\n"
-                f"003-notes/{path.name}\n\n"
-                "打开它，和 AI 一起读原文、填内容；定稿后把 frontmatter 里的 "
-                "draft: true 去掉。"
-            )[:4000],
-        )
+    if channels.learn(kb, channel, chat_id, text):
+        return
 
     rel_dir, body = split_prefix(text)
     replied = msg.get("reply_to_message") or {}
@@ -363,44 +168,31 @@ def handle_message(msg, kb):
             or (doc.get("file_name") and i["name"] == doc["file_name"])
         ), None)
         if not target:
-            return tg.api(
-                "sendMessage", chat_id=chat_id,
-                text="找不到这条文件的入库记录（bot 可能重启过）。重新发一次文件，在说明里带上 /video。",
+            return channel.send_text(
+                chat_id,
+                "找不到这条文件的入库记录（bot 可能重启过）。重新发一次文件，在说明里带上 /video。",
             )
         moved = move_files(kb, [target], rel_dir)
         _recent[chat_id] = [i for i in _recent.get(chat_id, []) if i is not target]
-        _pending_route.pop(chat_id, None)
+        channels.clear_pending(channel, chat_id)
         if not moved:
-            return tg.api("sendMessage", chat_id=chat_id, text=f"这个文件已经在 {rel_dir} 里了。")
-        return tg.api("sendMessage", chat_id=chat_id, text=f"✅ 已移入 {rel_dir}\n{moved[0].name}")
+            return channel.send_text(chat_id, f"这个文件已经在 {rel_dir} 里了。")
+        return channel.send_text(chat_id, f"✅ 已移入 {rel_dir}\n{moved[0].name}")
 
     if msg.get("document"):
-        folder = rel_dir or take_pending(chat_id)
+        folder = rel_dir or channels.take_pending(channel, chat_id)
         reply = handle_document(msg, kb, folder)
         if not folder:
             reply += "\n想存成视频转写稿？在刚才那条文件消息上回复 /video。"
-        return tg.api("sendMessage", chat_id=chat_id, text=reply[:4000])
+        return channel.send_text(chat_id, reply)
 
     urls = URL_RE.findall(body)
     if urls:
-        force_video = rel_dir == ROUTES["/video"]
-        if force_video:
-            video_urls, other_urls = urls, []
-        else:
-            video_urls = [u for u in urls if video.is_video_url(u)]
-            other_urls = [u for u in urls if u not in video_urls]
-
-        parts = []
-        if video_urls:
-            enqueue_videos(video_urls, chat_id, kb)
-            parts.append(
-                f"收到 {len(video_urls)} 个视频，开始转写…\n"
-                "完成后把转录和关键截图发你。"
-            )
-        if other_urls:
-            parts.append(f"收到 {len(other_urls)} 个链接，开始抓取…")
-            parts.append(handle_urls(other_urls, kb))
-        return tg.api("sendMessage", chat_id=chat_id, text="\n\n".join(parts)[:4000])
+        channels.handle_urls(
+            kb, channel, chat_id, urls,
+            force_video=(rel_dir == ROUTES["/video"]),
+        )
+        return
 
     route_cmd = detect_file_route(body)
     if route_cmd:
@@ -410,30 +202,30 @@ def handle_message(msg, kb):
         moved = move_files(kb, picked, folder) if picked else []
         moved_ids = {id(i) for i in picked}
         _recent[chat_id] = [i for i in _recent.get(chat_id, []) if id(i) not in moved_ids]
-        _pending_route.pop(chat_id, None)
+        channels.clear_pending(channel, chat_id)
         if not picked:
-            return tg.api(
-                "sendMessage", chat_id=chat_id,
-                text="最近 30 分钟没有可移动的文件。先发文件，或回复文件消息发 /video。",
+            return channel.send_text(
+                chat_id,
+                "最近 30 分钟没有可移动的文件。先发文件，或回复文件消息发 /video。",
             )
         if not moved:
-            return tg.api("sendMessage", chat_id=chat_id, text=f"这些文件已经在 {folder} 里了。")
+            return channel.send_text(chat_id, f"这些文件已经在 {folder} 里了。")
         lines = [f"✅ 已存入 {folder}"]
         lines += [str(p.relative_to(kb)).replace("\\", "/") for p in moved]
-        return tg.api("sendMessage", chat_id=chat_id, text="\n".join(lines)[:4000])
+        return channel.send_text(chat_id, "\n".join(lines))
 
     # 只发了一个前缀：记住目标目录，等下一条文件或文字
     if rel_dir and not body:
-        set_pending(chat_id, rel_dir)
-        return tg.api(
-            "sendMessage", chat_id=chat_id,
-            text=f"收到，接下来 30 分钟内发的文件或文字会存到 {rel_dir}。",
+        channels.set_pending(channel, chat_id, rel_dir)
+        return channel.send_text(
+            chat_id,
+            f"收到，接下来 {RECENT_TTL // 60} 分钟内发的文件或文字会存到 {rel_dir}。",
         )
 
     if body:
-        folder = rel_dir or take_pending(chat_id) or "001-inbox"
+        folder = rel_dir or channels.take_pending(channel, chat_id) or "001-inbox"
         path = save_text(kb, body, folder, kind=folder.split("/")[-1])
-        return tg.api("sendMessage", chat_id=chat_id, text=f"已存入 {folder}\n{path.name}")
+        return channel.send_text(chat_id, f"已存入 {folder}\n{path.name}")
     return None
 
 
@@ -472,6 +264,8 @@ def notify_failed(kb):
     """启动时把 failed/ 汇总发一条，别让失败静默堆着。"""
     folder = kb / "002-references" / "failed"
     if not folder.exists():
+        return
+    if not os.environ.get("TOKEN", "").strip():
         return
 
     files = sorted(folder.glob("*.json"))
@@ -517,6 +311,13 @@ def run_bot():
             print(f"[feishu] 启动失败：{exc}", flush=True)
 
     threading.Thread(target=_delayed_summary, args=(kb,), daemon=True).start()
+
+    if not os.environ.get("TOKEN", "").strip():
+        if not os.environ.get("FEISHU_APP_ID", "").strip():
+            sys.exit("`.env` 里既没有 TOKEN，也没有 FEISHU_APP_ID，没有可启动的通道。")
+        print("[telegram] 未配置 TOKEN，只跑飞书通道", flush=True)
+        while True:
+            time.sleep(3600)
 
     while True:
         try:
