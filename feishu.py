@@ -320,8 +320,6 @@ def start(kb):
         .build()
     )
 
-    app_id, app_secret = _credentials()
-
     # 补收放后台：积压十几条视频时，不能把实时长连接一起拖住
     def _backfill_job():
         try:
@@ -333,6 +331,7 @@ def start(kb):
 
     while True:
         try:
+            app_id, app_secret = _credentials()
             client = lark.ws.Client(
                 app_id, app_secret,
                 event_handler=handler,
