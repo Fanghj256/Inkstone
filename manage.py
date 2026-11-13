@@ -2,6 +2,7 @@
 
   python manage.py drop <路径|URL> [--reason "为什么不要"]   删除一篇 raw 原文，并留审计记录
   python manage.py check                                     体检：raw 改动、失效链接、frontmatter
+  python manage.py rebuild-html <文件夹|--all>                重压视频的 note.html（派生文件）
   python manage.py install-hooks                             让 raw/ 只读钩子生效
 
 删除 raw 不要直接在编辑器里删：这个命令会 git rm、记一笔 dropped.md、再提交，
@@ -9,6 +10,7 @@
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -124,6 +126,75 @@ def cmd_drop(args):
         print("已推送到远端（失败会在下一次提交时补）。")
 
 
+def _parse_ts(value):
+    parts = [int(x) for x in value.split(":")]
+    if len(parts) == 3:
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    return parts[0] * 60 + parts[1]
+
+
+def _transcript_paragraphs(path):
+    rows = []
+    for block in path.read_text(encoding="utf-8", errors="replace").split("\n\n"):
+        m = re.match(r"\[((?:\d{2}:)?\d{2}:\d{2})\]\s*(.*)", block.strip(), re.S)
+        if m:
+            rows.append({"start": float(_parse_ts(m.group(1))), "text": m.group(2).strip()})
+    return rows
+
+
+def _rebuild_one(kb, folder):
+    import video
+
+    meta_path = folder / "meta.json"
+    transcript = folder / "transcript.txt"
+    if not meta_path.exists() or not transcript.exists():
+        print(f"跳过（缺 meta.json 或 transcript.txt）：{folder.name}")
+        return False
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    paragraphs = _transcript_paragraphs(transcript)
+    if not paragraphs:
+        print(f"跳过（transcript.txt 解析不出段落）：{folder.name}")
+        return False
+
+    meta["_folder"] = folder
+    html = video.build_html(meta, paragraphs, meta.get("frame_list") or [])
+    store.atomic_write_text(folder / "note.html", html)
+
+    git(kb, "add", "--", (folder / "note.html").relative_to(kb).as_posix())
+    c = git(kb, "commit", "--no-verify", "-m", f"chore: 重压 {meta.get('title', folder.name)} 的 note.html")
+    if c.returncode != 0:
+        print((c.stderr or c.stdout).strip())
+        return False
+
+    size = (folder / "note.html").stat().st_size
+    print(f"已重压：{folder.name} -> {size / 1024 / 1024:.2f} MB")
+    return True
+
+
+def cmd_rebuild_html(args):
+    kb = kb_root(args.kb)
+    root = kb / RAW / "video"
+    if not root.is_dir():
+        sys.exit(f"没有视频目录：{root}")
+
+    if args.all:
+        folders = sorted(p for p in root.iterdir() if p.is_dir())
+    elif args.target:
+        candidates = [p for p in root.iterdir() if p.is_dir() and args.target in p.name]
+        if len(candidates) != 1:
+            sys.exit(f"匹配到 {len(candidates)} 个视频文件夹，请写得更具体。")
+        folders = candidates
+    else:
+        sys.exit("给一个视频文件夹名，或者用 --all。")
+
+    push = os.environ.get("AUTO_PUSH", "1") != "0" and store._has_remote(kb)
+    changed = sum(_rebuild_one(kb, folder) for folder in folders)
+    if changed and push:
+        store._push(kb)
+    print(f"完成：{changed}/{len(folders)} 个")
+
+
 def cmd_check(args):
     kb = kb_root(args.kb)
     problems = 0
@@ -198,6 +269,11 @@ def main():
 
     p = sub.add_parser("check", help="体检 raw 改动、失效链接、frontmatter")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("rebuild-html", help="重压视频的 note.html（只改这个派生文件）")
+    p.add_argument("target", nargs="?", help="视频文件夹名的一部分")
+    p.add_argument("--all", action="store_true", help="重压全部视频")
+    p.set_defaults(func=cmd_rebuild_html)
 
     p = sub.add_parser("install-hooks", help="启用 raw 只读 pre-commit 钩子")
     p.set_defaults(func=cmd_install_hooks)

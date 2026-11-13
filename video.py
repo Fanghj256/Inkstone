@@ -595,6 +595,12 @@ def _ocr_engine():
     return _ocr
 
 
+def _imread(path):
+    """Windows 下 cv2.imread 读不了中文路径，用 fromfile + imdecode。"""
+    data = np.fromfile(str(path), dtype=np.uint8)
+    return cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
+
+
 def _dhash(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     small = cv2.resize(gray, (9, 8), interpolation=cv2.INTER_AREA)
@@ -612,7 +618,7 @@ def score_frames(rows):
     out = []
 
     for row in rows:
-        img = cv2.imread(str(row["path"]))
+        img = _imread(row["path"])
         if img is None:
             continue
         h, w = img.shape[:2]
@@ -845,7 +851,7 @@ def build_markdown(meta, paragraphs, frames):
 
 def _html_image(path, max_width, quality):
     """note.html 里放压缩预览，不重复存一份全尺寸原图。"""
-    img = cv2.imread(str(path))
+    img = _imread(path)
     if img is None:
         return base64.b64encode(path.read_bytes()).decode("ascii")
     if max_width and img.shape[1] > max_width:
@@ -942,7 +948,7 @@ def _write_outputs(kb, final, meta, paragraphs, frames):
     frame_width = _env_int("VIDEO_FRAME_MAX_WIDTH", 1080)
     frame_quality = _env_int("VIDEO_FRAME_QUALITY", 84)
     for frame in frames:
-        img = cv2.imread(str(frame["path"]))
+        img = _imread(frame["path"])
         if img is None:
             continue
         if frame_width and img.shape[1] > frame_width:

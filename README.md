@@ -514,6 +514,7 @@ git -C "D:\my-kb" push -u origin main
 ```powershell
 python manage.py drop <路径|URL> --reason "..."   # 删 raw 并留记录
 python manage.py check                            # 体检
+python manage.py rebuild-html --all               # 重压旧视频的 note.html（只改派生文件）
 python manage.py install-hooks                    # 启用 raw 只读钩子
 ```
 
