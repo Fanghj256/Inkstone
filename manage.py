@@ -209,6 +209,13 @@ def cmd_check(args):
     else:
         print("干净")
 
+    worktree = git(kb, "diff", "--name-status", "--diff-filter=MDR", "--", RAW.as_posix())
+    if worktree.stdout.strip():
+        print("\n== raw 工作区（未暂存）==")
+        print(worktree.stdout.strip())
+        print("有意删除：用 `python manage.py drop <路径>` 收尾；误删：`git checkout -- <路径>`。")
+        problems += 1
+
     print("\n== 失效的相对链接 ==")
     link_re = re.compile(r"\]\(([^)\s]+)\)")
     for md in kb.rglob("*.md"):
