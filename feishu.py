@@ -297,6 +297,9 @@ def start(kb):
 
     def on_message(data: P2ImMessageReceiveV1) -> None:
         msg = data.event.message
+        # 不要处理机器人自己发的回执/文件，否则会自己回自己
+        if getattr(getattr(msg, "sender", None), "sender_type", "") == "app":
+            return
         mid = msg.message_id
         with _seen_lock:
             if mid in _seen:
