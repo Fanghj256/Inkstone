@@ -249,6 +249,7 @@ def download_resource(message_id, file_key, kind="file"):
 
 
 def _handle_file(kb, chat_id, msg):
+    import channels
     import store
 
     try:
@@ -270,9 +271,10 @@ def _handle_file(kb, chat_id, msg):
             return
 
         data = download_resource(msg.message_id, key, kind)
-        path = store.save_file(kb, name, data)
+        folder = channels.take_pending(FeishuChannel(), chat_id) or "002-references/files"
+        path = store.save_file(kb, name, data, folder)
         store.git_commit(kb, path, f"file: {path.name}")
-        send_text(chat_id, f"✅ 文件已存入 002-references/files\n{path.name}\n{len(data):,} 字节")
+        send_text(chat_id, f"✅ 文件已存入 {folder}\n{path.name}\n{len(data):,} 字节")
     except Exception as exc:  # noqa: BLE001
         send_text(chat_id, f"⚠️ 文件存入失败：{exc}"[:2000])
 
